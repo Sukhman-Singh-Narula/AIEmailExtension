@@ -1,5 +1,6 @@
 import * as InboxSDK from '@inboxsdk/core';
 
+
 // Utility function to retrieve data from Chrome storage
 async function retrieveFromStorage(key) {
     return new Promise((resolve) => {
