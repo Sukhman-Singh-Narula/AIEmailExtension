@@ -207,6 +207,7 @@
           <div class="modal-body">
             <div id="recording-status">
               <p class="status-text">Click to start recording</p>
+              <p class="recording-tip">Include your subject in curly braces, e.g. {Meeting tomorrow}</p>
               <div class="recording-indicator"></div>
             </div>
             <div id="transcription-status" style="display: none;">
@@ -214,7 +215,11 @@
               <div class="loader"></div>
             </div>
             <div id="email-options" style="display: none;">
-              <p>Select email tone:</p>
+              <p>Enter recipient name and select email tone:</p>
+              <div class="recipient-input-container">
+                <input type="text" id="recipient-name" placeholder="Recipient's name (e.g., John, Team, etc.)" class="recipient-input">
+              </div>
+              <p class="tone-label">Select tone:</p>
               <div class="options-container">
                 <button class="email-type-btn" data-type="formal">Formal</button>
                 <button class="email-type-btn" data-type="friendly">Friendly</button>
@@ -244,8 +249,19 @@
         const emailTypeButtons = modal.querySelectorAll('.email-type-btn');
         emailTypeButtons.forEach(button => {
             button.addEventListener('click', function () {
+                // Get recipient name
+                const recipientName = document.getElementById('recipient-name').value.trim();
+                if (!recipientName) {
+                    alert('Please enter the recipient\'s name first.');
+                    return;
+                }
+
+                // Highlight selected button
+                emailTypeButtons.forEach(btn => btn.classList.remove('selected'));
+                this.classList.add('selected');
+
                 const emailType = this.getAttribute('data-type');
-                generateEmail(emailType);
+                generateEmail(emailType, recipientName);
             });
         });
 
@@ -370,8 +386,16 @@
           }
         }
         
-        .status-text {
+        .recording-tip {
+          font-size: 13px;
+          color: #5f6368;
+          font-style: italic;
+          margin-top: 5px;
           margin-bottom: 10px;
+        }
+        
+        .status-text {
+          margin-bottom: 5px;
         }
         
         .recording-active .recording-indicator {
@@ -400,6 +424,30 @@
           margin-top: 10px;
         }
         
+        .recipient-input-container {
+          margin: 10px 0 15px 0;
+          width: 100%;
+        }
+        
+        .recipient-input {
+          width: 100%;
+          padding: 8px 10px;
+          border: 1px solid #dadce0;
+          border-radius: 4px;
+          font-size: 14px;
+          box-sizing: border-box;
+        }
+        
+        .recipient-input:focus {
+          outline: none;
+          border-color: #1a73e8;
+        }
+        
+        .tone-label {
+          margin-top: 15px;
+          margin-bottom: 8px;
+        }
+        
         .email-type-btn {
           padding: 8px 16px;
           background-color: #f1f3f4;
@@ -411,6 +459,12 @@
         
         .email-type-btn:hover {
           background-color: #e8eaed;
+        }
+        
+        .email-type-btn.selected {
+          background-color: #e8f0fe;
+          border-color: #1a73e8;
+          color: #1a73e8;
         }
       `;
         document.head.appendChild(style);
@@ -616,6 +670,28 @@
         transcribeAudio(audioBlob);
     }
 
+    // Extract subject from transcribed text
+    function extractSubject(text) {
+        const subjectRegex = /\{([^{}]+)\}/;
+        const match = text.match(subjectRegex);
+
+        if (match && match[1]) {
+            const subject = match[1].trim();
+            // Remove the subject part from the original text
+            const cleanedText = text.replace(subjectRegex, '').trim();
+
+            return {
+                subject: subject,
+                cleanedText: cleanedText
+            };
+        }
+
+        return {
+            subject: '',
+            cleanedText: text
+        };
+    }
+
     // Transcribe audio using Groq's Whisper API
     function transcribeAudio(audioBlob) {
         debugLog('Transcribing audio, blob size:', audioBlob.size);
@@ -721,6 +797,14 @@
                 document.getElementById('transcription-status').style.display = 'none';
                 document.getElementById('email-options').style.display = 'block';
 
+                // Focus on recipient name input
+                setTimeout(() => {
+                    const recipientInput = document.getElementById('recipient-name');
+                    if (recipientInput) {
+                        recipientInput.focus();
+                    }
+                }, 100);
+
                 // Store transcription for later use
                 window.transcribedText = data.text;
             })
@@ -743,9 +827,9 @@
             });
     }
 
-    // Generate email based on transcription and selected type
-    function generateEmail(emailType) {
-        debugLog('Generating email with type:', emailType);
+    // Generate email based on transcription, selected type, and recipient name
+    function generateEmail(emailType, recipientName) {
+        debugLog('Generating email with type:', emailType, 'for recipient:', recipientName);
         if (!window.transcribedText) {
             alert('No transcription available. Please try recording again.');
             return;
@@ -755,13 +839,23 @@
         document.getElementById('email-options').style.display = 'none';
         document.getElementById('generation-status').style.display = 'block';
 
-        // Prepare prompt for Llama model
-        const prompt = `
-        You are an email assistant. Please draft a ${emailType} email based on the following transcribed speech:
+        // Check if we have a subject
+        const hasSubject = window.emailSubject && window.emailSubject.length > 0;
+        debugLog('Has subject:', hasSubject, 'Subject:', window.emailSubject);
+
+        // Create a tailored system prompt that includes recipient name and tone instructions
+        const systemPrompt = `You are an email drafting assistant that creates well-formatted emails. 
+  Address the email to ${recipientName} in a ${emailType} tone. 
+  Make sure to include an appropriate greeting and closing based on the ${emailType} tone.
+  Keep the email concise and focused on the key points from the user's transcribed speech.
+  ${hasSubject ? 'Do not include a subject line in the email body as it will be added separately.' : 'Include a brief subject line at the beginning of your response.'}`;
+
+        // Prepare user prompt for Llama model
+        const userPrompt = `
+        Please draft a ${emailType} email addressed to ${recipientName} based on the following transcribed speech:
         
         "${window.transcribedText}"
-        
-        Format the email appropriately for a ${emailType} tone, including proper greeting and closing.
+        ${hasSubject ? `\n\nNote: The subject will be: "${window.emailSubject}"` : ''}
       `;
 
         // Add a timeout to prevent hanging requests
@@ -780,8 +874,8 @@
             body: JSON.stringify({
                 model: 'llama3-70b-8192', // Use Groq's Llama model
                 messages: [
-                    { role: 'system', content: 'You are an email drafting assistant that creates well-formatted emails.' },
-                    { role: 'user', content: prompt }
+                    { role: 'system', content: systemPrompt },
+                    { role: 'user', content: userPrompt }
                 ],
                 temperature: 0.7,
                 max_tokens: 2048
@@ -872,12 +966,36 @@
             return;
         }
 
-        // Focus on compose area
-        composeArea.focus();
+        // Check if we have a subject
+        const hasSubject = window.emailSubject && window.emailSubject.length > 0;
 
-        // Insert content - try different methods as Gmail can be finicky
         try {
-            // Method 1: execCommand (deprecated but works in Gmail)
+            // First, try to find and fill the subject field if we have a subject
+            if (hasSubject) {
+                // Look for the subject field in the Gmail compose window
+                const subjectField = findSubjectField();
+                if (subjectField) {
+                    debugLog('Found subject field, inserting subject:', window.emailSubject);
+                    // Focus on the subject field
+                    subjectField.focus();
+
+                    // Insert the subject
+                    if (document.execCommand('insertText', false, window.emailSubject)) {
+                        debugLog('Subject inserted with execCommand');
+                    } else {
+                        // Alternative method
+                        subjectField.value = window.emailSubject;
+                        debugLog('Subject inserted with value property');
+                    }
+                } else {
+                    debugLog('Subject field not found');
+                }
+            }
+
+            // Now focus on compose area for the email body
+            composeArea.focus();
+
+            // Insert content - try different methods as Gmail can be finicky
             if (document.execCommand('insertText', false, content)) {
                 debugLog('Content inserted with execCommand');
                 return;
@@ -912,6 +1030,42 @@
         }
     }
 
+    // Find the subject field in Gmail compose
+    function findSubjectField() {
+        // Try different selectors for Gmail subject field
+        const subjectSelectors = [
+            'input[name="subjectbox"]',
+            'input[aria-label="Subject"]',
+            'input.aoT',
+            'input[placeholder="Subject"]'
+        ];
+
+        for (const selector of subjectSelectors) {
+            const subjectField = document.querySelector(selector);
+            if (subjectField) {
+                return subjectField;
+            }
+        }
+
+        // If standard selectors fail, try to find by relative position
+        const composeArea = findComposeArea();
+        if (composeArea) {
+            // Look for input fields above the compose area
+            const composeForm = composeArea.closest('form') || composeArea.closest('div[role="dialog"]');
+            if (composeForm) {
+                const inputFields = composeForm.querySelectorAll('input[type="text"]');
+                // Subject field is typically the first or second input field in the compose form
+                for (const field of inputFields) {
+                    if (field.offsetWidth > 200) { // Subject fields are usually wide
+                        return field;
+                    }
+                }
+            }
+        }
+
+        return null;
+    }
+
     // Reset modal to initial state
     function resetModalState() {
         debugLog('Resetting modal state');
@@ -923,7 +1077,18 @@
         document.getElementById('email-options').style.display = 'none';
         document.getElementById('generation-status').style.display = 'none';
 
+        // Reset recipient input and button selection
+        const recipientInput = document.getElementById('recipient-name');
+        if (recipientInput) {
+            recipientInput.value = '';
+        }
+
+        // Clear selected tone button
+        const emailTypeButtons = document.querySelectorAll('.email-type-btn');
+        emailTypeButtons.forEach(btn => btn.classList.remove('selected'));
+
         window.transcribedText = null;
+        window.emailSubject = null;
     }
 
     // Listen for page changes in Gmail
