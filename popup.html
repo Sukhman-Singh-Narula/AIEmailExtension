@@ -1,0 +1,82 @@
+<!-- popup.html -->
+<!DOCTYPE html>
+<html>
+
+<head>
+    <title>Gmail Audio Assistant</title>
+    <style>
+        body {
+            width: 300px;
+            padding: 15px;
+            font-family: Arial, sans-serif;
+        }
+
+        .container {
+            display: flex;
+            flex-direction: column;
+            gap: 15px;
+        }
+
+        button {
+            background-color: #1a73e8;
+            color: white;
+            border: none;
+            padding: 10px;
+            border-radius: 4px;
+            cursor: pointer;
+            transition: background-color 0.2s;
+        }
+
+        button:hover {
+            background-color: #0d66d0;
+        }
+
+        .settings {
+            margin-top: 15px;
+        }
+
+        .api-keys {
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+        }
+
+        input {
+            padding: 8px;
+            border: 1px solid #ccc;
+            border-radius: 4px;
+        }
+
+        label {
+            font-weight: bold;
+            margin-bottom: 5px;
+            display: block;
+        }
+    </style>
+</head>
+
+<body>
+    <div class="container">
+        <h2>Gmail Audio Assistant</h2>
+        <p>This extension adds an audio recording button to Gmail compose. Record, transcribe, and generate emails
+            automatically.</p>
+
+        <div class="settings">
+            <h3>API Settings</h3>
+            <div class="api-keys">
+                <div>
+                    <label for="groqApiKey">Groq API Key</label>
+                    <input type="password" id="groqApiKey" placeholder="Enter your Groq API key">
+                </div>
+            </div>
+            <button id="saveSettings" style="margin-top: 10px;">Save Settings</button>
+        </div>
+
+        <div style="margin-top: 10px;">
+            <p id="status"></p>
+        </div>
+    </div>
+    <script src="popup.js"></script>
+</body>
+
+</html>
