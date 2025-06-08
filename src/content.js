@@ -1,861 +1,861 @@
-import * as InboxSDK from '@inboxsdk/core';
+// Fixed Gmail Extension with proper API key loading
+console.log('🎤 Email Transcription Extension: Content script loaded!');
 
-// Utility function to retrieve data from Chrome storage
-async function retrieveFromStorage(key) {
-    return new Promise((resolve) => {
-        chrome.storage.sync.get(key, function (result) {
-            resolve(result[key]);
-        });
-    });
-}
-
-// Enhanced AudioRecorder class with advanced features
-class AudioRecorder {
-    constructor(sdk) {
-        this.sdk = sdk;
+class GmailEmailRecorder {
+    constructor() {
+        console.log('🎤 Initializing GmailEmailRecorder...');
         this.recording = false;
         this.mediaRecorder = null;
         this.stream = null;
-        this.token = null;
         this.chunks = [];
         this.recordingPopup = null;
         this.customizationPopup = null;
         this.currentComposeView = null;
-        this.settings = {};
-        this.templates = [];
-        this.shortcuts = {};
+        this.provider = 'groq'; // default
+        this.apiKey = null;
 
-        // Initialize settings and shortcuts
-        this.loadUserSettings();
-        this.setupKeyboardShortcuts();
-    }
-
-    // Load user settings from storage
-    async loadUserSettings() {
-        try {
-            const result = await chrome.storage.sync.get(['user_settings', 'email_templates']);
-            this.settings = result.user_settings || {};
-            this.templates = result.email_templates || [];
-        } catch (error) {
-            console.error('Error loading settings:', error);
+        // Initialize when DOM is ready
+        if (document.readyState === 'loading') {
+            console.log('🎤 Waiting for DOM to load...');
+            document.addEventListener('DOMContentLoaded', () => this.init());
+        } else {
+            console.log('🎤 DOM already loaded, initializing...');
+            this.init();
         }
     }
 
-    // Setup keyboard shortcuts
-    setupKeyboardShortcuts() {
-        if (!this.settings.enableShortcuts) return;
+    async init() {
+        console.log('🎤 Gmail extension initialized!');
 
-        document.addEventListener('keydown', (e) => {
-            // Ctrl+Shift+R: Start recording
-            if (e.ctrlKey && e.shiftKey && e.key === 'R') {
-                e.preventDefault();
-                if (this.currentComposeView && !this.recording) {
-                    this.startRecording(this.currentComposeView);
-                }
-            }
+        // Load settings first
+        await this.loadSettings();
 
-            // Escape: Stop recording
-            if (e.key === 'Escape' && this.recording) {
-                e.preventDefault();
-                this.stopRecording();
-            }
-        });
+        // Wait a bit for Gmail to load, then start looking for compose windows
+        setTimeout(() => {
+            this.waitForGmail();
+        }, 2000);
     }
 
-    // Enhanced recording popup with more features
-    createRecordingPopup() {
-        const popup = document.createElement('div');
-        popup.className = 'transcription-recording-popup enhanced';
-        popup.innerHTML = `
-            <div class="recording-header">
-                <div class="recording-indicator">
-                    <div class="pulse-dot"></div>
-                    <span>Recording...</span>
-                </div>
-                <div class="recording-timer">00:00</div>
-            </div>
-            <div class="recording-waveform">
-                <div class="wave-bar"></div>
-                <div class="wave-bar"></div>
-                <div class="wave-bar"></div>
-                <div class="wave-bar"></div>
-                <div class="wave-bar"></div>
-            </div>
-            <div class="recording-controls">
-                <button class="control-btn pause-btn" id="pauseRecording" title="Pause">
-                    ⏸️
-                </button>
-                <button class="control-btn stop-btn" id="stopRecording" title="Stop & Process">
-                    <img src="${chrome.runtime.getURL("icons/stop_icon.png")}" alt="Stop">
-                    Stop & Process
-                </button>
-            </div>
-            <div class="voice-commands">
-                <small>💡 Try: "Use template intro" or "Set tone formal"</small>
-            </div>
-            <div class="recording-tips">
-                <small>Shortcut: ESC to stop • Speak clearly</small>
-            </div>
-        `;
+    async loadSettings() {
+        return new Promise((resolve) => {
+            chrome.storage.local.get([
+                'selectedProvider',
+                'groqApiKey',
+                'openaiApiKey'
+            ], (result) => {
+                console.log('🎤 Raw storage result:', result);
 
-        document.body.appendChild(popup);
-        this.recordingPopup = popup;
-
-        // Start timer and visual effects
-        this.startTimer();
-        this.startWaveformAnimation();
-
-        // Add event listeners
-        popup.querySelector('#stopRecording').addEventListener('click', () => {
-            this.stopRecording();
-        });
-
-        popup.querySelector('#pauseRecording').addEventListener('click', () => {
-            this.togglePause();
-        });
-
-        return popup;
-    }
-
-    // Enhanced customization popup with templates and smart suggestions
-    createCustomizationPopup() {
-        const popup = document.createElement('div');
-        popup.className = 'transcription-customization-popup enhanced';
-        popup.innerHTML = `
-            <div class="customization-header">
-                <h3>🎯 Customize Your Email</h3>
-                <div class="processing-status">
-                    <img src="${chrome.runtime.getURL("icons/status.gif")}" alt="Processing">
-                    <span>Processing audio...</span>
-                </div>
-            </div>
-            <div class="customization-form">
-                <div class="quick-actions">
-                    <button class="quick-btn" data-tone="professional">💼 Professional</button>
-                    <button class="quick-btn" data-tone="friendly">😊 Friendly</button>
-                    <button class="quick-btn" data-tone="formal">📋 Formal</button>
-                    <button class="quick-btn" data-tone="casual">👋 Casual</button>
-                </div>
+                this.provider = result.selectedProvider || 'groq';
                 
-                <div class="form-group">
-                    <label>📧 To (optional):</label>
-                    <input type="text" id="recipientName" placeholder="e.g., John, Dr. Smith, Team">
-                    <div class="smart-suggestions" id="nameSuggestions"></div>
-                </div>
-                
-                <div class="form-row">
-                    <div class="form-group half">
-                        <label>🎭 Tone:</label>
-                        <select id="emailTone">
-                            <option value="professional">Professional</option>
-                            <option value="friendly">Friendly</option>
-                            <option value="formal">Formal</option>
-                            <option value="casual">Casual</option>
-                            <option value="concise">Concise</option>
-                            <option value="enthusiastic">Enthusiastic</option>
-                        </select>
-                    </div>
-                    <div class="form-group half">
-                        <label>📋 Type:</label>
-                        <select id="emailType">
-                            <option value="general">General</option>
-                            <option value="request">Request/Ask</option>
-                            <option value="follow-up">Follow-up</option>
-                            <option value="thank-you">Thank You</option>
-                            <option value="introduction">Introduction</option>
-                            <option value="meeting">Meeting</option>
-                            <option value="proposal">Proposal</option>
-                        </select>
-                    </div>
-                </div>
+            async processTranscription(audioBlob) {
+                    const formData = new FormData();
+                    formData.append('file', audioBlob, 'recording.webm');
 
-                ${this.templates.length > 0 ? `
-                <div class="form-group">
-                    <label>📄 Apply Template:</label>
-                    <select id="emailTemplate">
-                        <option value="">Select a template...</option>
-                        ${this.templates.map(t => `<option value="${t.id}">${t.name}</option>`).join('')}
-                    </select>
-                </div>
-                ` : ''}
+                    let url, model;
 
-                <div class="advanced-options" id="advancedToggle">
-                    <span>⚙️ Advanced Options</span>
-                    <div class="advanced-content" style="display: none;">
-                        <div class="form-group">
-                            <label>📝 Additional Instructions:</label>
-                            <textarea id="customInstructions" placeholder="e.g., Include meeting agenda, mention deadline, use bullet points..."></textarea>
-                        </div>
-                        <div class="checkbox-group">
-                            <label><input type="checkbox" id="includeSignature" ${this.settings.includeSignature ? 'checked' : ''}> Include signature</label>
-                            <label><input type="checkbox" id="addSubject"> Suggest subject line</label>
-                            <label><input type="checkbox" id="urgentFlag"> Mark as urgent</label>
-                        </div>
-                    </div>
-                </div>
-            </div>
-            <div class="customization-actions">
-                <button class="cancel-btn" id="cancelCustomization">Cancel</button>
-                <button class="preview-btn" id="previewEmail">👁️ Preview</button>
-                <button class="process-btn" id="processWithOptions" disabled>
-                    <span class="btn-text">✨ Insert Email</span>
-                    <span class="btn-loading" style="display: none;">Processing...</span>
-                </button>
-            </div>
-        `;
-
-        document.body.appendChild(popup);
-        this.customizationPopup = popup;
-
-        // Setup event listeners
-        this.setupCustomizationListeners();
-
-        // Auto-focus recipient field if enabled
-        if (this.settings.autoDetectNames) {
-            this.detectAndSuggestRecipients();
-        }
-
-        // Set default tone
-        if (this.settings.defaultTone) {
-            popup.querySelector('#emailTone').value = this.settings.defaultTone;
-        }
-
-        return popup;
-    }
-
-    // Setup all customization popup event listeners
-    setupCustomizationListeners() {
-        const popup = this.customizationPopup;
-
-        // Quick action buttons
-        popup.querySelectorAll('.quick-btn').forEach(btn => {
-            btn.addEventListener('click', () => {
-                const tone = btn.dataset.tone;
-                popup.querySelector('#emailTone').value = tone;
-                btn.classList.add('selected');
-                // Remove selected from others
-                popup.querySelectorAll('.quick-btn').forEach(b => {
-                    if (b !== btn) b.classList.remove('selected');
-                });
-            });
-        });
-
-        // Advanced options toggle
-        popup.querySelector('#advancedToggle').addEventListener('click', () => {
-            const content = popup.querySelector('.advanced-content');
-            const isVisible = content.style.display !== 'none';
-            content.style.display = isVisible ? 'none' : 'block';
-            popup.querySelector('#advancedToggle span').textContent =
-                isVisible ? '⚙️ Advanced Options' : '🔽 Hide Advanced';
-        });
-
-        // Template selection
-        const templateSelect = popup.querySelector('#emailTemplate');
-        if (templateSelect) {
-            templateSelect.addEventListener('change', (e) => {
-                if (e.target.value) {
-                    this.applyTemplate(e.target.value);
-                }
-            });
-        }
-
-        // Main action buttons
-        popup.querySelector('#cancelCustomization').addEventListener('click', () => {
-            this.closeCustomizationPopup();
-        });
-
-        popup.querySelector('#previewEmail').addEventListener('click', () => {
-            this.previewEmail();
-        });
-
-        popup.querySelector('#processWithOptions').addEventListener('click', () => {
-            this.processWithCustomization();
-        });
-
-        // Auto-save draft functionality
-        if (this.settings.autoSaveDraft) {
-            this.setupAutoSave();
-        }
-    }
-
-    // Smart recipient detection and suggestions
-    detectAndSuggestRecipients() {
-        // Analyze compose view for existing recipients
-        try {
-            const toField = this.currentComposeView.getToRecipients();
-            if (toField && toField.length > 0) {
-                const firstName = toField[0].name?.split(' ')[0] || toField[0].emailAddress.split('@')[0];
-                this.customizationPopup.querySelector('#recipientName').value = firstName;
-            }
-        } catch (error) {
-            console.log('Could not detect recipients automatically');
-        }
-    }
-
-    // Apply template to current email
-    applyTemplate(templateId) {
-        const template = this.templates.find(t => t.id == templateId);
-        if (template) {
-            const instructionsField = this.customizationPopup.querySelector('#customInstructions');
-            instructionsField.value = `Use this template: ${template.content}`;
-            this.showMessage('Template applied! Will be merged with your recording.', 'info');
-        }
-    }
-
-    // Preview email functionality
-    async previewEmail() {
-        if (!this.rawTranscription) {
-            this.showMessage('Still processing audio, please wait...', 'info');
-            return;
-        }
-
-        try {
-            // Generate preview
-            const previewText = await this.generateEmailPreview();
-
-            // Show preview modal
-            this.showPreviewModal(previewText);
-
-        } catch (error) {
-            this.showMessage('Error generating preview', 'error');
-        }
-    }
-
-    // Show preview in modal
-    showPreviewModal(previewText) {
-        const modal = document.createElement('div');
-        modal.className = 'email-preview-modal';
-        modal.innerHTML = `
-            <div class="preview-content">
-                <div class="preview-header">
-                    <h3>📧 Email Preview</h3>
-                    <button class="close-preview">✕</button>
-                </div>
-                <div class="preview-body">
-                    <div class="email-preview">${previewText.replace(/\n/g, '<br>')}</div>
-                </div>
-                <div class="preview-actions">
-                    <button class="edit-btn">✏️ Edit</button>
-                    <button class="approve-btn">👍 Looks Good</button>
-                </div>
-            </div>
-        `;
-
-        document.body.appendChild(modal);
-
-        // Event listeners
-        modal.querySelector('.close-preview').addEventListener('click', () => {
-            modal.remove();
-        });
-
-        modal.querySelector('.edit-btn').addEventListener('click', () => {
-            modal.remove();
-            // Focus back on customization
-        });
-
-        modal.querySelector('.approve-btn').addEventListener('click', () => {
-            modal.remove();
-            this.processWithCustomization();
-        });
-    }
-
-    // Waveform animation for recording
-    startWaveformAnimation() {
-        const bars = this.recordingPopup.querySelectorAll('.wave-bar');
-        bars.forEach((bar, index) => {
-            bar.style.animationDelay = `${index * 0.1}s`;
-            bar.style.animation = 'waveform 1.5s infinite ease-in-out';
-        });
-    }
-
-    // Enhanced timer with features
-    startTimer() {
-        this.recordingStartTime = Date.now();
-        this.timerInterval = setInterval(() => {
-            if (this.recordingPopup) {
-                const elapsed = Math.floor((Date.now() - this.recordingStartTime) / 1000);
-                const minutes = Math.floor(elapsed / 60).toString().padStart(2, '0');
-                const seconds = (elapsed % 60).toString().padStart(2, '0');
-                const timerElement = this.recordingPopup.querySelector('.recording-timer');
-                if (timerElement) {
-                    timerElement.textContent = `${minutes}:${seconds}`;
-
-                    // Visual feedback for long recordings
-                    if (elapsed > 120) { // 2 minutes
-                        timerElement.style.color = '#ff9800';
+                    if (this.provider === 'groq') {
+                        url = 'https://api.groq.com/openai/v1/audio/transcriptions';
+                        model = 'whisper-large-v3';
+                    } else {
+                        url = 'https://api.openai.com/v1/audio/transcriptions';
+                        model = 'whisper-1';
                     }
-                    if (elapsed > 300) { // 5 minutes
-                        timerElement.style.color = '#f44336';
+
+                    formData.append('model', model);
+
+                    const response = await fetch(url, {
+                        method: 'POST',
+                        headers: { 'Authorization': `Bearer ${this.apiKey}` },
+                        body: formData,
+                    });
+
+                    if (response.ok) {
+                        const result = await response.json();
+                        return result.text;
+                    } else {
+                        const errorText = await response.text();
+                        console.error('🎤 Transcription API error:', response.status, errorText);
+                        throw new Error(`Transcription failed: ${response.status}`);
                     }
                 }
-            }
-        }, 1000);
-    }
-
-    // Pause/resume functionality
-    togglePause() {
-        if (this.mediaRecorder) {
-            if (this.mediaRecorder.state === 'recording') {
-                this.mediaRecorder.pause();
-                this.recordingPopup.querySelector('#pauseRecording').innerHTML = '▶️';
-                this.recordingPopup.querySelector('.recording-indicator span').textContent = 'Paused';
-            } else if (this.mediaRecorder.state === 'paused') {
-                this.mediaRecorder.resume();
-                this.recordingPopup.querySelector('#pauseRecording').innerHTML = '⏸️';
-                this.recordingPopup.querySelector('.recording-indicator span').textContent = 'Recording...';
-            }
-        }
-    }
-
-    // Voice command detection
-    async detectVoiceCommands(transcription) {
-        const commands = {
-            'use template': /use template (\w+)/i,
-            'set tone': /set tone (professional|friendly|formal|casual|concise)/i,
-            'send to': /send to (\w+)/i,
-            'make it urgent': /make it urgent|urgent/i,
-            'add signature': /add signature|include signature/i
-        };
-
-        const detectedCommands = {};
-
-        for (const [command, regex] of Object.entries(commands)) {
-            const match = transcription.match(regex);
-            if (match) {
-                detectedCommands[command] = match[1] || true;
-            }
-        }
-
-        return detectedCommands;
-    }
-
-    // Apply voice commands to customization
-    applyVoiceCommands(commands) {
-        if (!this.customizationPopup) return;
-
-        if (commands['set tone']) {
-            this.customizationPopup.querySelector('#emailTone').value = commands['set tone'];
-        }
-
-        if (commands['send to']) {
-            this.customizationPopup.querySelector('#recipientName').value = commands['send to'];
-        }
-
-        if (commands['make it urgent']) {
-            const urgentCheckbox = this.customizationPopup.querySelector('#urgentFlag');
-            if (urgentCheckbox) urgentCheckbox.checked = true;
-        }
-
-        if (commands['add signature']) {
-            const signatureCheckbox = this.customizationPopup.querySelector('#includeSignature');
-            if (signatureCheckbox) signatureCheckbox.checked = true;
-        }
-
-        if (commands['use template']) {
-            const templateSelect = this.customizationPopup.querySelector('#emailTemplate');
-            if (templateSelect) {
-                const template = this.templates.find(t =>
-                    t.name.toLowerCase().includes(commands['use template'].toLowerCase())
-                );
-                if (template) {
-                    templateSelect.value = template.id;
-                    this.applyTemplate(template.id);
-                }
-            }
-        }
-    }
-
-    // Enhanced recording start
-    async startRecording(composeView) {
-        if (this.recording) {
-            this.sdk.ButterBar.showMessage({ text: 'Recording is already in progress.' });
-            return;
-        }
-
-        // Load fresh settings
-        await this.loadUserSettings();
-        this.currentComposeView = composeView;
-
-        try {
-            this.stream = await navigator.mediaDevices.getUserMedia({
-                audio: {
-                    echoCancellation: true,
-                    noiseSuppression: true,
-                    sampleRate: 44100
-                }
-            });
-
-            this.mediaRecorder = new MediaRecorder(this.stream, {
-                mimeType: 'audio/webm;codecs=opus'
-            });
-
-            this.mediaRecorder.ondataavailable = (event) => this.chunks.push(event.data);
-            this.mediaRecorder.onstop = this.handleRecordingStop.bind(this);
-
-            // Create and show recording popup
-            this.createRecordingPopup();
-
-            this.mediaRecorder.start();
-            this.recording = true;
-
-            // Track usage
-            this.trackUsage('recording_started');
-
-        } catch (error) {
-            console.error('Error starting recording:', error);
-            this.sdk.ButterBar.showMessage({
-                text: 'Microphone access denied. Please enable microphone permissions.'
-            });
-        }
-    }
-
-    // Enhanced recording stop with voice command detection
-    async handleRecordingStop() {
-        // Clear timer and animations
-        if (this.timerInterval) {
-            clearInterval(this.timerInterval);
-        }
-
-        // Remove recording popup
-        if (this.recordingPopup) {
-            this.recordingPopup.remove();
-            this.recordingPopup = null;
-        }
-
-        // Quick insert mode check
-        if (this.settings.quickInsert) {
-            await this.processQuickInsert();
-            return;
-        }
-
-        // Show customization popup immediately
-        this.createCustomizationPopup();
-
-        // Start processing audio in background
-        const audioBlob = new Blob(this.chunks, { type: 'audio/webm' });
-        this.chunks = [];
-
-        try {
-            const storedToken = await this.retrieveToken();
-            this.processTranscriptionAsync(audioBlob, storedToken);
-        } catch (error) {
-            console.error('Error in processing:', error);
-            this.updateCustomizationStatus('Error processing audio. Please try again.', true);
-        }
-
-        // Stop media tracks
-        if (this.stream) {
-            this.stream.getTracks().forEach((track) => track.stop());
-            this.stream = null;
-        }
-    }
-
-    // Quick insert mode (skip customization)
-    async processQuickInsert() {
-        const audioBlob = new Blob(this.chunks, { type: 'audio/webm' });
-        this.chunks = [];
-
-        try {
-            const storedToken = await this.retrieveToken();
-
-            // Show minimal processing indicator
-            this.sdk.ButterBar.showMessage({
-                text: 'Quick processing your email...',
-                time: 10000
-            });
-
-            const transcriptionText = await processTranscription(audioBlob, storedToken);
-            const optimizedText = await postToGPT4Enhanced(
-                transcriptionText,
-                storedToken,
-                '',
-                this.settings.defaultTone || 'professional',
-                'general'
-            );
-
-            this.currentComposeView.insertTextIntoBodyAtCursor(optimizedText);
-            this.sdk.ButterBar.showMessage({ text: '✅ Email inserted successfully!' });
-
-            this.trackUsage('quick_insert_completed');
-
-        } catch (error) {
-            console.error('Error in quick processing:', error);
-            this.sdk.ButterBar.showMessage({ text: 'Error processing email. Please try again.' });
-        }
-
-        // Stop media tracks
-        if (this.stream) {
-            this.stream.getTracks().forEach((track) => track.stop());
-            this.stream = null;
-        }
-    }
-
-    // Process transcription with voice command detection
-    async processTranscriptionAsync(audioBlob, storedToken) {
-        try {
-            const transcriptionText = await processTranscription(audioBlob, storedToken);
-            this.rawTranscription = transcriptionText;
-
-            // Detect voice commands
-            const voiceCommands = await this.detectVoiceCommands(transcriptionText);
-            if (Object.keys(voiceCommands).length > 0) {
-                this.applyVoiceCommands(voiceCommands);
-                this.showMessage('Voice commands detected and applied!', 'success');
-            }
-
-            this.updateCustomizationStatus('✅ Audio processed! Configure options and click "Insert Email"', false);
-
-            // Enable the process button
-            const processBtn = this.customizationPopup?.querySelector('#processWithOptions');
-            if (processBtn) {
-                processBtn.disabled = false;
-            }
-
-        } catch (error) {
-            console.error('Error processing transcription:', error);
-            this.updateCustomizationStatus('❌ Error processing audio. Please try again.', true);
-        }
-    }
-
-    // Track usage statistics
-    async trackUsage(action) {
-        try {
-            const stats = await retrieveFromStorage('usage_stats') || {
-                todayCount: 0,
-                totalCount: 0,
-                avgLength: 0,
-                lastUsed: new Date().toDateString()
-            };
-
-            // Reset daily count if new day
-            if (stats.lastUsed !== new Date().toDateString()) {
-                stats.todayCount = 0;
-                stats.lastUsed = new Date().toDateString();
-            }
-
-            if (action === 'recording_started') {
-                stats.todayCount++;
-                stats.totalCount++;
-            }
-
-            await chrome.storage.sync.set({ usage_stats: stats });
-        } catch (error) {
-            console.error('Error tracking usage:', error);
-        }
-    }
-
-    // Enhanced message display
-    showMessage(message, type = 'info') {
-        this.sdk.ButterBar.showMessage({
-            text: message,
-            time: type === 'error' ? 8000 : 4000
-        });
-    }
-
-    // Rest of the methods remain the same as previous version...
-    async retrieveToken() {
-        return await retrieveFromStorage('openai_token');
-    }
-
-    updateCustomizationStatus(message, isError = false) {
-        if (!this.customizationPopup) return;
-
-        const statusElement = this.customizationPopup.querySelector('.processing-status span');
-        if (statusElement) {
-            statusElement.textContent = message;
-            statusElement.className = isError ? 'error' : 'success';
-        }
-    }
 
     async processWithCustomization() {
-        if (!this.rawTranscription) {
-            this.sdk.ButterBar.showMessage({ text: 'Still processing audio, please wait...' });
+                    console.log('🎤 Processing with customization...');
+
+                    if (!this.rawTranscription) {
+                        this.showMessage('Still processing audio, please wait...');
+                        return;
+                    }
+
+                    const processBtn = this.customizationPopup.querySelector('#processWithOptions');
+                    processBtn.disabled = true;
+                    processBtn.querySelector('.btn-text').textContent = 'Processing...';
+
+                    try {
+                        const recipientName = this.customizationPopup.querySelector('#recipientName').value.trim();
+                        const emailTone = this.customizationPopup.querySelector('#emailTone').value;
+                        const emailType = this.customizationPopup.querySelector('#emailType').value;
+
+                        const optimizedText = await this.processWithAI(
+                            this.rawTranscription,
+                            recipientName,
+                            emailTone,
+                            emailType
+                        );
+
+                        console.log('🎤 Generated email:', optimizedText);
+
+                        this.insertTextIntoCompose(optimizedText);
+                        this.closeCustomizationPopup();
+                        this.showMessage('Email transcribed and inserted successfully!');
+
+                    } catch (error) {
+                        console.error('🎤 Error in final processing:', error);
+                        processBtn.disabled = false;
+                        processBtn.querySelector('.btn-text').textContent = 'Insert Email';
+                        this.showMessage('Error processing email. Please try again.');
+                    }
+                }
+
+    async processWithAI(transcriptionText, recipientName, tone, emailType) {
+                    let systemPrompt = `You are an expert email writing assistant. Create a well-formatted, professional email based on the speech transcription provided.
+
+Instructions:
+- Correct any speech recognition errors
+- Format into proper email structure (greeting, body, closing)
+- Use a ${tone} tone throughout
+- This is a ${emailType} email`;
+
+                    if (recipientName) {
+                        systemPrompt += `\n- Address the email to ${recipientName}`;
+                    }
+
+                    const requestBody = {
+                        messages: [
+                            { role: "system", content: systemPrompt },
+                            { role: "user", content: `Please convert this speech transcription into a well-formatted email:\n\n"${transcriptionText}"` }
+                        ],
+                        temperature: 0.3,
+                        max_tokens: 2048
+                    };
+
+                    let url;
+
+                    if (this.provider === 'groq') {
+                        url = 'https://api.groq.com/openai/v1/chat/completions';
+                        requestBody.model = "mixtral-8x7b-32768";
+                    } else {
+                        url = 'https://api.openai.com/v1/chat/completions';
+                        requestBody.model = "gpt-4";
+                    }
+
+                    const response = await fetch(url, {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                            'Authorization': `Bearer ${this.apiKey}`
+                        },
+                        body: JSON.stringify(requestBody),
+                    });
+
+                    if (response.ok) {
+                        const result = await response.json();
+                        return result.choices[0].message.content.trim();
+                    } else {
+                        const errorText = await response.text();
+                        console.error('🎤 AI API error:', response.status, errorText);
+                        throw new Error(`AI processing failed: ${response.status}`);
+                    }
+                }
+
+                insertTextIntoCompose(text) {
+                    console.log('🎤 Inserting text into compose...');
+
+                    const composeSelectors = [
+                        '[contenteditable="true"]',
+                        '[role="textbox"]',
+                        '.Am.Al.editable',
+                        '.editable',
+                        '[g_editable="true"]',
+                        '.ii.gt div[contenteditable="true"]'
+                    ];
+
+                    let composeBody = null;
+                    for (const selector of composeSelectors) {
+                        composeBody = this.currentComposeView.querySelector(selector);
+                        if (composeBody) {
+                            console.log('🎤 Found compose body with selector:', selector);
+                            break;
+                        }
+                    }
+
+                    if (composeBody) {
+                        composeBody.focus();
+                        composeBody.innerHTML = '';
+
+                        const formattedText = text.replace(/\n/g, '<br><br>');
+                        composeBody.innerHTML = formattedText;
+
+                        const events = ['input', 'change', 'keyup'];
+                        events.forEach(eventType => {
+                            const event = new Event(eventType, { bubbles: true });
+                            composeBody.dispatchEvent(event);
+                        });
+
+                        console.log('🎤 Text inserted successfully!');
+                    } else {
+                        console.error('🎤 Could not find compose body to insert text');
+                        this.showMessage('Error: Could not find compose window to insert text');
+                    }
+                }
+
+                updateCustomizationStatus(message) {
+                    if (!this.customizationPopup) return;
+                    const statusElement = this.customizationPopup.querySelector('.processing-status');
+                    if (statusElement) {
+                        statusElement.textContent = message;
+                    }
+                }
+
+                closeCustomizationPopup() {
+                    if (this.customizationPopup) {
+                        this.customizationPopup.remove();
+                        this.customizationPopup = null;
+                    }
+                }
+
+                stopRecording() {
+                    console.log('🎤 Stopping recording...');
+                    if (this.mediaRecorder && this.recording) {
+                        this.mediaRecorder.stop();
+                        this.recording = false;
+                    }
+                }
+
+                showMessage(message) {
+                    console.log('🎤 Email Transcription:', message);
+
+                    const toast = document.createElement('div');
+                    toast.textContent = message;
+                    toast.style.cssText = `
+            position: fixed;
+            top: 20px;
+            left: 50%;
+            transform: translateX(-50%);
+            background: #333;
+            color: white;
+            padding: 12px 20px;
+            border-radius: 6px;
+            z-index: 100002;
+            font-family: 'Google Sans', sans-serif;
+            max-width: 400px;
+            text-align: center;
+        `;
+                    document.body.appendChild(toast);
+
+                    setTimeout(() => {
+                        toast.remove();
+                    }, 4000);
+                }
+            }
+
+// Initialize the extension
+console.log('🎤 Creating GmailEmailRecorder instance...');
+            const recorder = new GmailEmailRecorder();
+
+            // Test button for debugging
+            setTimeout(() => {
+                const testButton = document.createElement('div');
+                testButton.innerHTML = 'TEST';
+                testButton.style.cssText = `
+        position: fixed;
+        bottom: 20px;
+        right: 20px;
+        width: 50px;
+        height: 50px;
+        background: #1a73e8;
+        color: white;
+        border-radius: 6px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        cursor: pointer;
+        z-index: 100000;
+        font-size: 12px;
+        font-weight: bold;
+        box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+    `;
+                testButton.title = 'Extension loaded! Click compose to see voice button.';
+                testButton.onclick = () => {
+                    recorder.loadSettings().then(() => {
+                        alert(`Extension Status:\n\nProvider: ${recorder.provider}\nAPI Key: ${recorder.apiKey ? 'Set' : 'Missing'}\n\n1. Click compose in Gmail\n2. Look for voice button\n3. Make sure API key is saved`);
+                    });
+                };
+                document.body.appendChild(testButton);
+            }, 3000);q' && result.groqApiKey) {
+            this.apiKey = result.groqApiKey;
+            console.log('🎤 Loaded Groq API key:', this.apiKey ? 'Set' : 'Not set');
+        } else if (this.provider === 'openai' && result.openaiApiKey) {
+            this.apiKey = result.openaiApiKey;
+            console.log('🎤 Loaded OpenAI API key:', this.apiKey ? 'Set' : 'Not set');
+        } else {
+            this.apiKey = null;
+            console.log('🎤 No API key found for provider:', this.provider);
+        }
+
+        console.log('🎤 Final settings - Provider:', this.provider, 'API Key:', this.apiKey ? 'Available' : 'Missing');
+        resolve();
+    });
+});
+    }
+
+waitForGmail() {
+    console.log('🎤 Starting to look for Gmail compose windows...');
+
+    const checkForCompose = () => {
+        const composeSelectors = [
+            '[role="dialog"]',
+            '.nH .no',
+            '.AD',
+            '[gh="cm"]'
+        ];
+
+        let foundCompose = false;
+
+        composeSelectors.forEach(selector => {
+            const elements = document.querySelectorAll(selector);
+            elements.forEach(element => {
+                if (this.isComposeWindow(element) && !element.querySelector('.voice-transcribe-btn')) {
+                    console.log('🎤 Found compose window!', element);
+                    this.addButtonToCompose(element);
+                    foundCompose = true;
+                }
+            });
+        });
+
+        if (!foundCompose) {
+            this.addComposeButtonListener();
+        }
+    };
+
+    checkForCompose();
+    setInterval(checkForCompose, 2000);
+
+    let lastUrl = location.href;
+    new MutationObserver(() => {
+        const url = location.href;
+        if (url !== lastUrl) {
+            lastUrl = url;
+            console.log('🎤 URL changed, checking for compose windows...');
+            setTimeout(checkForCompose, 1000);
+        }
+    }).observe(document, { subtree: true, childList: true });
+}
+
+isComposeWindow(element) {
+    const indicators = [
+        'input[name="to"]',
+        'input[name="cc"]',
+        'input[name="bcc"]',
+        'input[name="subject"]',
+        '[name="to"]',
+        '[name="subject"]',
+        '.aoT',
+        '.gO',
+        '[role="textbox"]'
+    ];
+
+    return indicators.some(selector => element.querySelector(selector));
+}
+
+addComposeButtonListener() {
+    const composeButtons = document.querySelectorAll('[role="button"]');
+    composeButtons.forEach(button => {
+        const text = button.textContent.toLowerCase();
+        if (text.includes('compose') && !button.hasAttribute('data-voice-listener')) {
+            button.setAttribute('data-voice-listener', 'true');
+            button.addEventListener('click', () => {
+                console.log('🎤 Compose button clicked, waiting for window...');
+                setTimeout(() => {
+                    this.waitForGmail();
+                }, 1000);
+            });
+        }
+    });
+}
+
+addButtonToCompose(composeDialog) {
+    console.log('🎤 Attempting to add button to compose window...');
+
+    const toolbarSelectors = [
+        '[role="toolbar"]',
+        '.gU',
+        '.btC',
+        '.dC',
+        '.aDh',
+        '.aoP',
+        '.wO',
+        '.az9'
+    ];
+
+    let toolbar = null;
+    for (const selector of toolbarSelectors) {
+        toolbar = composeDialog.querySelector(selector);
+        if (toolbar) {
+            console.log('🎤 Found toolbar with selector:', selector);
+            break;
+        }
+    }
+
+    if (!toolbar) {
+        const sendButton = composeDialog.querySelector('[data-tooltip*="Send"]') ||
+            composeDialog.querySelector('[aria-label*="Send"]') ||
+            composeDialog.querySelector('.T-I.J-J5-Ji.aoO.v7.T-I-atl.L3');
+        if (sendButton) {
+            toolbar = sendButton.parentElement;
+            console.log('🎤 Found toolbar via send button');
+        }
+    }
+
+    if (!toolbar) {
+        console.log('🎤 No toolbar found, creating one...');
+        const composeBody = composeDialog.querySelector('[contenteditable="true"]') ||
+            composeDialog.querySelector('[role="textbox"]');
+        if (composeBody) {
+            toolbar = document.createElement('div');
+            toolbar.style.cssText = 'padding: 10px; border-top: 1px solid #e0e0e0;';
+            composeBody.parentElement.appendChild(toolbar);
+        }
+    }
+
+    if (!toolbar) {
+        console.log('🎤 Could not find or create toolbar');
+        return;
+    }
+
+    console.log('🎤 Adding voice button to toolbar...');
+
+    const voiceButton = document.createElement('button');
+    voiceButton.className = 'voice-transcribe-btn';
+    voiceButton.innerHTML = `Voice (${this.provider.toUpperCase()})`;
+    voiceButton.title = `Voice Transcribe Email using ${this.provider.toUpperCase()}`;
+    voiceButton.style.cssText = `
+            background: #1a73e8;
+            color: white;
+            border: none;
+            padding: 8px 16px;
+            border-radius: 20px;
+            cursor: pointer;
+            margin: 4px;
+            font-size: 13px;
+            font-weight: 500;
+            z-index: 1000;
+            position: relative;
+        `;
+
+    voiceButton.addEventListener('click', async (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        console.log('🎤 Voice button clicked!');
+
+        // ALWAYS reload settings before recording
+        console.log('🎤 Reloading settings before recording...');
+        await this.loadSettings();
+
+        if (!this.apiKey) {
+            console.log('🎤 No API key found after reload');
+            this.showMessage(`Please set your ${this.provider.toUpperCase()} API key in the extension popup first.`);
             return;
         }
 
-        const processBtn = this.customizationPopup.querySelector('#processWithOptions');
-        const btnText = processBtn.querySelector('.btn-text');
-        const btnLoading = processBtn.querySelector('.btn-loading');
-
-        btnText.style.display = 'none';
-        btnLoading.style.display = 'inline';
-        processBtn.disabled = true;
-
-        try {
-            // Get user preferences
-            const recipientName = this.customizationPopup.querySelector('#recipientName').value.trim();
-            const emailTone = this.customizationPopup.querySelector('#emailTone').value;
-            const emailType = this.customizationPopup.querySelector('#emailType').value;
-            const customInstructions = this.customizationPopup.querySelector('#customInstructions')?.value || '';
-            const includeSignature = this.customizationPopup.querySelector('#includeSignature')?.checked || false;
-            const addSubject = this.customizationPopup.querySelector('#addSubject')?.checked || false;
-
-            const storedToken = await this.retrieveToken();
-
-            const optimizedText = await postToGPT4Enhanced(
-                this.rawTranscription,
-                storedToken,
-                recipientName,
-                emailTone,
-                emailType,
-                customInstructions,
-                includeSignature,
-                addSubject
-            );
-
-            this.currentComposeView.insertTextIntoBodyAtCursor(optimizedText);
-            this.closeCustomizationPopup();
-            this.sdk.ButterBar.showMessage({ text: '🎉 Email transcribed and inserted successfully!' });
-
-            this.trackUsage('email_completed');
-
-        } catch (error) {
-            console.error('Error in final processing:', error);
-            btnText.style.display = 'inline';
-            btnLoading.style.display = 'none';
-            processBtn.disabled = false;
-            this.sdk.ButterBar.showMessage({ text: 'Error processing email. Please try again.' });
-        }
-    }
-
-    closeCustomizationPopup() {
-        if (this.customizationPopup) {
-            this.customizationPopup.remove();
-            this.customizationPopup = null;
-        }
-    }
-
-    stopRecording() {
-        if (this.mediaRecorder && this.recording) {
-            this.mediaRecorder.stop();
-            this.recording = false;
+        console.log('🎤 API key confirmed, starting recording...');
+        this.currentComposeView = composeDialog;
+        if (!this.recording) {
+            this.startRecording();
         } else {
-            this.sdk.ButterBar.showMessage({ text: 'No recording to stop.' });
+            this.stopRecording();
         }
+    });
+
+    toolbar.appendChild(voiceButton);
+    console.log('🎤 Voice button added successfully!');
+
+    this.addFallbackButton(composeDialog);
+}
+
+addFallbackButton(composeDialog) {
+    const floatingButton = document.createElement('div');
+    floatingButton.innerHTML = 'MIC';
+    floatingButton.title = `Voice Transcribe Email using ${this.provider.toUpperCase()}`;
+    floatingButton.style.cssText = `
+            position: absolute;
+            top: 10px;
+            right: 10px;
+            width: 50px;
+            height: 40px;
+            background: #1a73e8;
+            color: white;
+            border: none;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 12px;
+            font-weight: bold;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            z-index: 10000;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.3);
+        `;
+
+    floatingButton.addEventListener('click', async (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        console.log('🎤 Floating voice button clicked!');
+
+        // ALWAYS reload settings before recording
+        await this.loadSettings();
+
+        if (!this.apiKey) {
+            this.showMessage(`Please set your ${this.provider.toUpperCase()} API key in the extension popup first.`);
+            return;
+        }
+
+        this.currentComposeView = composeDialog;
+        if (!this.recording) {
+            this.startRecording();
+        } else {
+            this.stopRecording();
+        }
+    });
+
+    composeDialog.style.position = 'relative';
+    composeDialog.appendChild(floatingButton);
+    console.log('🎤 Floating voice button added!');
+}
+
+    async startRecording() {
+    console.log('🎤 Starting recording with API key:', this.apiKey ? 'Available' : 'Missing');
+
+    if (this.recording) {
+        this.showMessage('Recording is already in progress.');
+        return;
+    }
+
+    if (!this.apiKey) {
+        this.showMessage(`Please set your ${this.provider.toUpperCase()} API key in the extension popup first.`);
+        return;
+    }
+
+    try {
+        this.stream = await navigator.mediaDevices.getUserMedia({
+            audio: {
+                echoCancellation: true,
+                noiseSuppression: true,
+                sampleRate: 44100
+            }
+        });
+
+        this.mediaRecorder = new MediaRecorder(this.stream, {
+            mimeType: 'audio/webm;codecs=opus'
+        });
+
+        this.mediaRecorder.ondataavailable = (event) => this.chunks.push(event.data);
+        this.mediaRecorder.onstop = this.handleRecordingStop.bind(this);
+
+        this.createRecordingPopup();
+        this.mediaRecorder.start();
+        this.recording = true;
+
+        console.log('🎤 Recording started successfully!');
+
+        const buttons = this.currentComposeView.querySelectorAll('.voice-transcribe-btn');
+        buttons.forEach(button => {
+            button.innerHTML = 'Stop';
+            button.style.background = '#d93025';
+        });
+
+    } catch (error) {
+        console.error('🎤 Error starting recording:', error);
+        this.showMessage('Microphone access denied. Please enable microphone permissions.');
     }
 }
 
-// Global recorder instance
-let recorderInstance = null;
+createRecordingPopup() {
+    console.log('🎤 Creating recording popup...');
 
-// Load InboxSDK with enhanced features
-InboxSDK.load(2, "sdk_Transcription_7792b396c1").then((sdk) => {
-    sdk.Compose.registerComposeViewHandler((composeView) => {
-        if (!recorderInstance) {
-            recorderInstance = new AudioRecorder(sdk);
+    const popup = document.createElement('div');
+    popup.className = 'transcription-recording-popup';
+    popup.innerHTML = `
+            <div style="
+                position: fixed;
+                top: 20px;
+                right: 20px;
+                width: 320px;
+                background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+                color: white;
+                border-radius: 12px;
+                padding: 20px;
+                box-shadow: 0 10px 30px rgba(0,0,0,0.3);
+                z-index: 100000;
+                font-family: 'Google Sans', sans-serif;
+            ">
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px;">
+                    <div style="display: flex; align-items: center; gap: 10px;">
+                        <div style="
+                            width: 8px;
+                            height: 8px;
+                            background: #ff4757;
+                            border-radius: 50%;
+                            animation: pulse 1.5s infinite;
+                        "></div>
+                        <span style="font-weight: 600;">Recording...</span>
+                    </div>
+                    <div class="recording-timer" style="
+                        font-family: monospace;
+                        font-weight: 600;
+                        background: rgba(255,255,255,0.2);
+                        padding: 4px 8px;
+                        border-radius: 10px;
+                    ">00:00</div>
+                </div>
+                <div style="text-align: center; margin: 15px 0;">
+                    <button id="stopRecording" style="
+                        background: #ff4757;
+                        color: white;
+                        border: none;
+                        padding: 12px 24px;
+                        border-radius: 20px;
+                        cursor: pointer;
+                        font-weight: 500;
+                        font-size: 14px;
+                    ">Stop & Process</button>
+                </div>
+                <div style="font-size: 12px; opacity: 0.8; text-align: center;">
+                    Using ${this.provider.toUpperCase()} - Speak clearly for best results
+                </div>
+            </div>
+        `;
+
+    const style = document.createElement('style');
+    style.textContent = `
+            @keyframes pulse {
+                0%, 100% { opacity: 1; transform: scale(1); }
+                50% { opacity: 0.7; transform: scale(1.3); }
+            }
+        `;
+    document.head.appendChild(style);
+
+    document.body.appendChild(popup);
+    this.recordingPopup = popup;
+
+    this.startTimer();
+
+    popup.querySelector('#stopRecording').addEventListener('click', () => {
+        this.stopRecording();
+    });
+}
+
+startTimer() {
+    this.recordingStartTime = Date.now();
+    this.timerInterval = setInterval(() => {
+        if (this.recordingPopup) {
+            const elapsed = Math.floor((Date.now() - this.recordingStartTime) / 1000);
+            const minutes = Math.floor(elapsed / 60).toString().padStart(2, '0');
+            const seconds = (elapsed % 60).toString().padStart(2, '0');
+            const timerElement = this.recordingPopup.querySelector('.recording-timer');
+            if (timerElement) {
+                timerElement.textContent = `${minutes}:${seconds}`;
+            }
+        }
+    }, 1000);
+}
+
+    async handleRecordingStop() {
+    console.log('🎤 Handling recording stop...');
+
+    if (this.timerInterval) {
+        clearInterval(this.timerInterval);
+    }
+
+    if (this.recordingPopup) {
+        this.recordingPopup.remove();
+        this.recordingPopup = null;
+    }
+
+    const buttons = this.currentComposeView.querySelectorAll('.voice-transcribe-btn');
+    buttons.forEach(button => {
+        button.innerHTML = `Voice (${this.provider.toUpperCase()})`;
+        button.style.background = '#1a73e8';
+    });
+
+    this.createCustomizationPopup();
+
+    const audioBlob = new Blob(this.chunks, { type: 'audio/webm' });
+    this.chunks = [];
+
+    try {
+        this.processTranscriptionAsync(audioBlob);
+    } catch (error) {
+        console.error('🎤 Error in processing:', error);
+        this.updateCustomizationStatus('Error processing audio. Please try again.');
+    }
+
+    if (this.stream) {
+        this.stream.getTracks().forEach((track) => track.stop());
+        this.stream = null;
+    }
+}
+
+createCustomizationPopup() {
+    console.log('🎤 Creating customization popup...');
+
+    const popup = document.createElement('div');
+    popup.className = 'transcription-customization-popup';
+    popup.innerHTML = `
+            <div style="
+                position: fixed;
+                top: 50%;
+                left: 50%;
+                transform: translate(-50%, -50%);
+                width: 450px;
+                max-width: 90vw;
+                background: white;
+                border-radius: 16px;
+                box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+                z-index: 100001;
+                font-family: 'Google Sans', sans-serif;
+                overflow: hidden;
+            ">
+                <div style="
+                    padding: 24px;
+                    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+                    color: white;
+                ">
+                    <h3 style="margin: 0 0 10px 0; font-size: 18px;">Customize Your Email</h3>
+                    <div class="processing-status" style="
+                        background: rgba(255,255,255,0.2);
+                        padding: 8px 12px;
+                        border-radius: 20px;
+                        font-size: 14px;
+                    ">Processing audio with ${this.provider.toUpperCase()}...</div>
+                </div>
+                
+                <div style="padding: 24px;">
+                    <div style="margin-bottom: 20px;">
+                        <label style="display: block; font-weight: 600; margin-bottom: 8px;">To (optional):</label>
+                        <input type="text" id="recipientName" placeholder="e.g., John, Dr. Smith" style="
+                            width: 100%;
+                            padding: 10px;
+                            border: 2px solid #e0e0e0;
+                            border-radius: 8px;
+                            font-size: 14px;
+                            box-sizing: border-box;
+                        ">
+                    </div>
+                    
+                    <div style="display: flex; gap: 16px; margin-bottom: 20px;">
+                        <div style="flex: 1;">
+                            <label style="display: block; font-weight: 600; margin-bottom: 8px;">Tone:</label>
+                            <select id="emailTone" style="
+                                width: 100%;
+                                padding: 10px;
+                                border: 2px solid #e0e0e0;
+                                border-radius: 8px;
+                                font-size: 14px;
+                            ">
+                                <option value="professional">Professional</option>
+                                <option value="friendly">Friendly</option>
+                                <option value="formal">Formal</option>
+                                <option value="casual">Casual</option>
+                            </select>
+                        </div>
+                        <div style="flex: 1;">
+                            <label style="display: block; font-weight: 600; margin-bottom: 8px;">Type:</label>
+                            <select id="emailType" style="
+                                width: 100%;
+                                padding: 10px;
+                                border: 2px solid #e0e0e0;
+                                border-radius: 8px;
+                                font-size: 14px;
+                            ">
+                                <option value="general">General</option>
+                                <option value="request">Request</option>
+                                <option value="follow-up">Follow-up</option>
+                                <option value="thank-you">Thank You</option>
+                            </select>
+                        </div>
+                    </div>
+                </div>
+                
+                <div style="
+                    padding: 20px 24px;
+                    background: #f8f9fa;
+                    display: flex;
+                    gap: 12px;
+                    justify-content: flex-end;
+                ">
+                    <button id="cancelCustomization" style="
+                        background: transparent;
+                        color: #666;
+                        border: 2px solid #ddd;
+                        padding: 10px 20px;
+                        border-radius: 20px;
+                        cursor: pointer;
+                        font-weight: 500;
+                    ">Cancel</button>
+                    <button id="processWithOptions" disabled style="
+                        background: #4caf50;
+                        color: white;
+                        border: none;
+                        padding: 10px 20px;
+                        border-radius: 20px;
+                        cursor: pointer;
+                        font-weight: 500;
+                    ">
+                        <span class="btn-text">Insert Email</span>
+                    </button>
+                </div>
+            </div>
+        `;
+
+    document.body.appendChild(popup);
+    this.customizationPopup = popup;
+
+    popup.querySelector('#cancelCustomization').addEventListener('click', () => {
+        this.closeCustomizationPopup();
+    });
+
+    popup.querySelector('#processWithOptions').addEventListener('click', () => {
+        this.processWithCustomization();
+    });
+}
+
+    async processTranscriptionAsync(audioBlob) {
+    console.log('🎤 Processing transcription with', this.provider, 'API key available:', !!this.apiKey);
+
+    try {
+        const transcriptionText = await this.processTranscription(audioBlob);
+        this.rawTranscription = transcriptionText;
+
+        console.log('🎤 Transcription complete:', transcriptionText);
+
+        this.updateCustomizationStatus('Audio processed! Configure options and click "Insert Email"');
+
+        const processBtn = this.customizationPopup?.querySelector('#processWithOptions');
+        if (processBtn) {
+            processBtn.disabled = false;
         }
 
-        // Update current compose view
-        recorderInstance.currentComposeView = composeView;
+    } catch (error) {
+        console.error('🎤 Error processing transcription:', error);
+        this.updateCustomizationStatus('Error processing audio. Please try again.');
+    }
+}
 
-        // Enhanced transcription button
-        composeView.addButton({
-            title: "Voice Transcribe Email (Ctrl+Shift+R)",
-            iconUrl: chrome.runtime.getURL("icons/start_icon.png"),
-            onClick: () => {
-                if (!recorderInstance.recording) {
-                    recorderInstance.startRecording(composeView);
-                } else {
-                    recorderInstance.stopRecording();
-                }
-            },
-            hasDropdown: false,
-            type: 'MODIFIER',
-        });
-    });
-});
-
-// Enhanced transcription function (unchanged)
-async function processTranscription(audioBlob, storedToken) {
+    async processTranscription(audioBlob) {
     const formData = new FormData();
     formData.append('file', audioBlob, 'recording.webm');
-    formData.append('model', 'whisper-1');
 
-    const requestOptions = {
-        method: 'POST',
-        headers: { 'Authorization': `Bearer ${storedToken}` },
-        body: formData,
-    };
+    let url, model;
 
-    try {
-        const response = await fetch('https://api.openai.com/v1/audio/transcriptions', requestOptions);
-        if (response.status === 200) {
-            const result = await response.json();
-            return result.text;
-        } else {
-            throw new Error(`Transcription failed: ${response.status}`);
-        }
-    } catch (error) {
-        console.error('Error fetching transcription:', error);
-        throw new Error('Could not process transcription');
-    }
-}
-
-// Enhanced GPT-4 processing with all new features
-async function postToGPT4Enhanced(transcriptionText, storedToken, recipientName, tone, emailType, customInstructions = '', includeSignature = false, addSubject = false) {
-    let systemPrompt = `You are an expert email writing assistant. Create a well-formatted, professional email based on the speech transcription provided.
-
-Instructions:
-- Correct any speech recognition errors, especially proper nouns
-- Format into proper email structure (greeting, body paragraphs, closing)
-- Maintain the original intent and all important content
-- Use a ${tone} tone throughout
-- This is a ${emailType.replace('-', ' ')} email`;
-
-    if (recipientName) {
-        systemPrompt += `\n- Address the email to ${recipientName}`;
-    }
-
-    if (customInstructions) {
-        systemPrompt += `\n- Additional instructions: ${customInstructions}`;
-    }
-
-    if (includeSignature) {
-        systemPrompt += `\n- Include an appropriate email signature`;
-    }
-
-    if (addSubject) {
-        systemPrompt += `\n- Suggest a compelling subject line at the beginning (format: "Subject: [suggestion]")`;
-    }
-
-    systemPrompt += `
-- Ensure proper paragraph breaks and flow
-- Keep the email concise but complete
-- Use professional formatting appropriate for the tone
-- Do not add extra content not mentioned in the transcription`;
-
-    const gptRequestBody = {
-        model: "gpt-4",
-        messages: [
-            {
-                role: "system",
-                content: systemPrompt
-            },
-            {
-                role: "user",
-                content: `Please convert this speech transcription into a well-formatted email:\n\n"${transcriptionText}"`
-            }
-        ],
-        temperature: 0.3
-    };
-
-    const gptHeaders = new Headers({
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${storedToken}`
-    });
-
-    const gptRequestOptions = {
-        method: 'POST',
-        headers: gptHeaders,
-        body: JSON.stringify(gptRequestBody),
-    };
-
-    try {
-        const gptResponse = await fetch('https://api.openai.com/v1/chat/completions', gptRequestOptions);
-        const gptResult = await gptResponse.json();
-        return gptResult.choices[0].message.content.trim();
-    } catch (error) {
-        console.error('Error processing transcription through GPT-4:', error);
-        throw new Error('GPT-4 processing failed');
-    }
-}
+    if (this.provider === 'gro

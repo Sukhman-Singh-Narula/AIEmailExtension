@@ -6,11 +6,9 @@ const path = require('path');
 
 module.exports = {
     entry: {
-        popup: './src/index.js',
+        popup: './src/popup.js',  // Changed to popup.js instead of index.js
         content: './src/content.js',
         background: './src/background.js',
-        pageWorld: '@inboxsdk/core/pageWorld.js',
-        inboxSDKBackground: '@inboxsdk/core/background.js',
     },
     devtool: 'source-map',
     module: {
@@ -37,21 +35,31 @@ module.exports = {
     },
     plugins: [
         new HtmlWebpackPlugin({
-            template: './public/index.html',
+            template: './src/popup.html',  // Use src/popup.html as template
             filename: 'popup.html',
             chunks: ['popup']
         }),
         new CopyWebpackPlugin({
             patterns: [
-                { from: 'public', to: '.', globOptions: { ignore: ['**/index.html'] } },
-                { from: 'src/content.css', to: '.' },
-                { from: 'public/icons', to: 'icons' },
+                // Copy icons from public
+                {
+                    from: 'public/icons',
+                    to: 'icons',
+                    noErrorOnMissing: true
+                },
+                // Copy CSS files
+                {
+                    from: 'src/content.css',
+                    to: 'content.css',
+                    noErrorOnMissing: true
+                },
+                // Copy manifest
                 { from: 'src/manifest.json', to: 'manifest.json' },
             ]
         })
     ],
     output: {
-        path: path.resolve(__dirname, 'dist'),
+        path: path.resolve(__dirname, '../dist'),
         filename: '[name].js',
         clean: true
     },

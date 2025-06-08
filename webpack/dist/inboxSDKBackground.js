@@ -1,2 +1,0 @@
-chrome.runtime.onMessage.addListener(((e,t,d)=>{if("inboxsdk__injectPageWorld"===e.type&&t.tab)if(chrome.scripting){let e,r;t.documentId?e=[t.documentId]:r=[t.frameId],chrome.scripting.executeScript({target:{tabId:t.tab.id,documentIds:e,frameIds:r},world:"MAIN",files:["pageWorld.js"]}),d(!0)}else d(!1)}));
-//# sourceMappingURL=inboxSDKBackground.js.map
