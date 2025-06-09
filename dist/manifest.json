@@ -1,10 +1,10 @@
 {
   "name": "Email Transcription - Voice to Text",
-  "version": "2.0",
+  "version": "2.1",
   "description": "Streamlined voice-to-text transcription with instant customization for Gmail.",
   "content_scripts": [
     {
-      "matches": ["https://mail.google.com/*", "https://*.google.com/*"],
+      "matches": ["https://mail.google.com/*"],
       "js": ["content.js"],
       "css": ["content.css"],
       "run_at": "document_end",
@@ -14,8 +14,12 @@
   "background": {
     "service_worker": "background.js"
   },
-  "permissions": ["scripting", "storage", "activeTab"],
-  "host_permissions": ["https://mail.google.com/", "https://api.groq.com/"],
+  "permissions": ["storage", "activeTab"],
+  "host_permissions": [
+    "https://mail.google.com/*",
+    "https://api.groq.com/*",
+    "https://api.openai.com/*"
+  ],
   "manifest_version": 3,
   "action": {
     "default_popup": "popup.html",

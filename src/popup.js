@@ -1,4 +1,4 @@
-// src/popup.js - Standalone popup script (no React)
+// Improved popup script with better UX and validation
 document.addEventListener('DOMContentLoaded', function () {
     console.log('🎤 Popup loaded');
 
@@ -11,6 +11,9 @@ document.addEventListener('DOMContentLoaded', function () {
     const openaiApiKey = document.getElementById('openaiApiKey');
     const saveButton = document.getElementById('saveSettings');
     const status = document.getElementById('status');
+    const connectionStatus = document.getElementById('connectionStatus');
+    const groqStatus = document.getElementById('groqStatus');
+    const openaiStatus = document.getElementById('openaiStatus');
 
     // Load saved settings
     loadSavedSettings();
@@ -20,6 +23,10 @@ document.addEventListener('DOMContentLoaded', function () {
     openaiProvider.addEventListener('click', () => selectProvider('openai'));
     groqRadio.addEventListener('change', () => selectProvider('groq'));
     openaiRadio.addEventListener('change', () => selectProvider('openai'));
+
+    // Real-time validation
+    groqApiKey.addEventListener('input', () => validateKey('groq', groqApiKey.value));
+    openaiApiKey.addEventListener('input', () => validateKey('openai', openaiApiKey.value));
 
     // Save settings
     saveButton.addEventListener('click', saveSettings);
@@ -44,8 +51,53 @@ document.addEventListener('DOMContentLoaded', function () {
         groqProvider.classList.toggle('selected', provider === 'groq');
         openaiProvider.classList.toggle('selected', provider === 'openai');
 
-        // Save provider preference
+        // Save provider preference immediately
         chrome.storage.local.set({ selectedProvider: provider });
+
+        // Update connection status
+        updateConnectionStatus();
+    }
+
+    function validateKey(provider, key) {
+        const statusElement = provider === 'groq' ? groqStatus : openaiStatus;
+
+        if (!key) {
+            statusElement.textContent = '';
+            return false;
+        }
+
+        // Check format
+        const validFormat = provider === 'groq' ? key.startsWith('gsk_') : key.startsWith('sk-');
+        const validLength = key.length > 20;
+
+        if (!validFormat) {
+            statusElement.textContent = '❌';
+            statusElement.title = `${provider === 'groq' ? 'Groq' : 'OpenAI'} keys should start with "${provider === 'groq' ? 'gsk_' : 'sk_'}"`;
+            return false;
+        }
+
+        if (!validLength) {
+            statusElement.textContent = '⚠️';
+            statusElement.title = 'Key seems too short';
+            return false;
+        }
+
+        statusElement.textContent = '✅';
+        statusElement.title = 'Valid format';
+        return true;
+    }
+
+    function updateConnectionStatus() {
+        const selectedProvider = groqRadio.checked ? 'groq' : 'openai';
+        const key = selectedProvider === 'groq' ? groqApiKey.value : openaiApiKey.value;
+
+        if (key && validateKey(selectedProvider, key)) {
+            connectionStatus.className = 'status-indicator connected';
+            connectionStatus.title = 'Ready to transcribe';
+        } else {
+            connectionStatus.className = 'status-indicator disconnected';
+            connectionStatus.title = 'API key required';
+        }
     }
 
     async function loadSavedSettings() {
@@ -56,19 +108,34 @@ document.addEventListener('DOMContentLoaded', function () {
                 'selectedProvider'
             ]);
 
-            console.log('🎤 Loaded settings:', { ...result, groqApiKey: result.groqApiKey ? '[HIDDEN]' : 'none', openaiApiKey: result.openaiApiKey ? '[HIDDEN]' : 'none' });
+            console.log('🎤 Loaded settings:', {
+                ...result,
+                groqApiKey: result.groqApiKey ? '[HIDDEN]' : 'none',
+                openaiApiKey: result.openaiApiKey ? '[HIDDEN]' : 'none'
+            });
 
             // Load API keys
             if (result.groqApiKey) {
                 groqApiKey.value = result.groqApiKey;
+                validateKey('groq', result.groqApiKey);
             }
             if (result.openaiApiKey) {
                 openaiApiKey.value = result.openaiApiKey;
+                validateKey('openai', result.openaiApiKey);
             }
 
             // Load provider selection (default to Groq)
             const provider = result.selectedProvider || 'groq';
             selectProvider(provider);
+
+            // Show ready status if we have a valid setup
+            const selectedProvider = groqRadio.checked ? 'groq' : 'openai';
+            const selectedKey = selectedProvider === 'groq' ? result.groqApiKey : result.openaiApiKey;
+
+            if (selectedKey && validateKey(selectedProvider, selectedKey)) {
+                showStatus('✅ Ready to transcribe! Go to Gmail and click compose.', 'success');
+                saveButton.textContent = '✅ Ready to Use';
+            }
 
         } catch (error) {
             console.error('🎤 Error loading settings:', error);
@@ -97,23 +164,21 @@ document.addEventListener('DOMContentLoaded', function () {
         }
 
         // Validate key format
-        if (selectedProvider === 'groq' && !groqKey.startsWith('gsk_')) {
-            showStatus('Groq API keys should start with "gsk_"', 'error');
-            groqApiKey.focus();
+        const currentKey = selectedProvider === 'groq' ? groqKey : openaiKey;
+        if (!validateKey(selectedProvider, currentKey)) {
+            showStatus(`Invalid ${selectedProvider === 'groq' ? 'Groq' : 'OpenAI'} API key format`, 'error');
+            const input = selectedProvider === 'groq' ? groqApiKey : openaiApiKey;
+            input.focus();
             return;
         }
 
-        if (selectedProvider === 'openai' && !openaiKey.startsWith('sk-')) {
-            showStatus('OpenAI API keys should start with "sk-"', 'error');
-            openaiApiKey.focus();
-            return;
-        }
-
+        // Show loading state
         saveButton.disabled = true;
-        saveButton.textContent = 'Saving...';
+        saveButton.className = 'save-button loading';
+        showStatus('Saving settings...', 'info');
 
         try {
-            // Save to storage
+            // Save to chrome.storage.local (consistent with content script)
             await chrome.storage.local.set({
                 selectedProvider: selectedProvider,
                 groqApiKey: groqKey,
@@ -121,19 +186,28 @@ document.addEventListener('DOMContentLoaded', function () {
             });
 
             console.log('🎤 Settings saved successfully');
-            showStatus('✅ Settings saved successfully!', 'success');
 
-            // Auto-close popup after success
+            // Update UI to show success
+            saveButton.textContent = '✅ Saved! Ready to Use';
+            saveButton.className = 'save-button';
+            updateConnectionStatus();
+
+            showStatus('🎉 Setup complete! Go to Gmail and click compose to start transcribing.', 'success');
+
+            // Auto-close popup after success (but give time to read message)
             setTimeout(() => {
                 window.close();
-            }, 1500);
+            }, 2000);
 
         } catch (error) {
             console.error('🎤 Error saving settings:', error);
             showStatus('Error saving settings: ' + error.message, 'error');
         } finally {
             saveButton.disabled = false;
-            saveButton.textContent = 'Save Settings';
+            if (saveButton.className.includes('loading')) {
+                saveButton.className = 'save-button';
+                saveButton.textContent = 'Save & Activate';
+            }
         }
     }
 
@@ -149,4 +223,7 @@ document.addEventListener('DOMContentLoaded', function () {
             }, 5000);
         }
     }
+
+    // Real-time connection status updates
+    setInterval(updateConnectionStatus, 1000);
 });

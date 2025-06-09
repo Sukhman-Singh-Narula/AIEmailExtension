@@ -1,11 +1,10 @@
 <!DOCTYPE html>
 <html>
-
 <head>
-    <title>Gmail Audio Assistant</title>
+    <title>Gmail Voice Transcription</title>
     <style>
         body {
-            width: 380px;
+            width: 400px;
             padding: 0;
             margin: 0;
             font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
@@ -28,7 +27,24 @@
             margin: 0 0 8px 0;
             color: #1a73e8;
             font-size: 20px;
-            font-weight: 500;
+            font-weight: 600;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 8px;
+        }
+
+        .mic-icon {
+            width: 24px;
+            height: 24px;
+            background: #1a73e8;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: white;
+            font-size: 12px;
+            font-weight: bold;
         }
 
         .header p {
@@ -41,19 +57,23 @@
             margin-bottom: 16px;
             padding: 16px;
             border: 2px solid #e8eaed;
-            border-radius: 8px;
+            border-radius: 12px;
             cursor: pointer;
             transition: all 0.2s ease;
+            position: relative;
         }
 
         .api-provider:hover {
             border-color: #1a73e8;
             background: #f8f9ff;
+            transform: translateY(-2px);
+            box-shadow: 0 4px 12px rgba(26, 115, 232, 0.15);
         }
 
         .api-provider.selected {
             border-color: #1a73e8;
             background: #e8f0fe;
+            box-shadow: 0 4px 12px rgba(26, 115, 232, 0.2);
         }
 
         .provider-header {
@@ -65,6 +85,7 @@
         .provider-header input[type="radio"] {
             margin-right: 12px;
             transform: scale(1.2);
+            accent-color: #1a73e8;
         }
 
         .provider-info {
@@ -77,6 +98,7 @@
             font-size: 16px;
             display: flex;
             align-items: center;
+            gap: 8px;
         }
 
         .provider-subtitle {
@@ -86,18 +108,40 @@
         }
 
         .recommended {
-            background: #e8f5e8;
-            color: #137333;
+            background: linear-gradient(135deg, #4caf50, #45a049);
+            color: white;
             font-size: 11px;
-            padding: 3px 8px;
+            padding: 4px 8px;
             border-radius: 12px;
-            margin-left: 12px;
+            font-weight: 500;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
+        .speed-badge {
+            background: linear-gradient(135deg, #ff9800, #f57c00);
+            color: white;
+            font-size: 11px;
+            padding: 4px 8px;
+            border-radius: 12px;
             font-weight: 500;
         }
 
         .api-key-input {
             margin-top: 12px;
             display: none;
+            animation: slideDown 0.3s ease;
+        }
+
+        @keyframes slideDown {
+            from {
+                opacity: 0;
+                transform: translateY(-10px);
+            }
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
         }
 
         .api-provider.selected .api-key-input {
@@ -106,98 +150,190 @@
 
         label {
             display: block;
-            font-weight: 500;
+            font-weight: 600;
             margin-bottom: 8px;
             color: #202124;
             font-size: 14px;
         }
 
+        .input-wrapper {
+            position: relative;
+        }
+
         input[type="password"],
         input[type="text"] {
             width: 100%;
-            padding: 12px;
-            border: 1px solid #dadce0;
-            border-radius: 6px;
+            padding: 12px 16px;
+            border: 2px solid #dadce0;
+            border-radius: 8px;
             font-size: 14px;
             box-sizing: border-box;
-            transition: border-color 0.2s;
-            font-family: monospace;
+            transition: all 0.2s ease;
+            font-family: 'SF Mono', Monaco, monospace;
+            background: #fafafa;
         }
 
         input[type="password"]:focus,
         input[type="text"]:focus {
             outline: none;
             border-color: #1a73e8;
-            box-shadow: 0 0 0 2px rgba(26, 115, 232, 0.1);
+            background: white;
+            box-shadow: 0 0 0 3px rgba(26, 115, 232, 0.1);
+        }
+
+        .input-status {
+            position: absolute;
+            right: 12px;
+            top: 50%;
+            transform: translateY(-50%);
+            font-size: 16px;
         }
 
         .save-button {
             width: 100%;
-            background: #1a73e8;
+            background: linear-gradient(135deg, #1a73e8, #1557b0);
             color: white;
             border: none;
-            padding: 14px;
-            border-radius: 6px;
+            padding: 16px;
+            border-radius: 8px;
             cursor: pointer;
-            font-weight: 500;
+            font-weight: 600;
             font-size: 14px;
-            transition: background-color 0.2s;
+            transition: all 0.2s ease;
             margin-top: 20px;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
         }
 
-        .save-button:hover {
-            background: #1557b0;
+        .save-button:hover:not(:disabled) {
+            background: linear-gradient(135deg, #1557b0, #1e3a5f);
+            transform: translateY(-2px);
+            box-shadow: 0 6px 20px rgba(26, 115, 232, 0.3);
         }
 
         .save-button:disabled {
             background: #dadce0;
             cursor: not-allowed;
+            transform: none;
+            box-shadow: none;
+        }
+
+        .save-button.loading {
+            position: relative;
+            color: transparent;
+        }
+
+        .save-button.loading::after {
+            content: '';
+            position: absolute;
+            width: 20px;
+            height: 20px;
+            top: 50%;
+            left: 50%;
+            margin-left: -10px;
+            margin-top: -10px;
+            border: 2px solid transparent;
+            border-top: 2px solid white;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+        }
+
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
         }
 
         .status {
             margin-top: 16px;
-            padding: 12px;
-            border-radius: 6px;
+            padding: 12px 16px;
+            border-radius: 8px;
             font-size: 13px;
             text-align: center;
             display: none;
+            font-weight: 500;
         }
 
         .status.success {
-            background: #e8f5e8;
-            color: #137333;
+            background: linear-gradient(135deg, #e8f5e8, #f1f8e9);
+            color: #2e7d32;
             border: 1px solid #c8e6c9;
         }
 
         .status.error {
-            background: #fce8e6;
-            color: #d93025;
+            background: linear-gradient(135deg, #fce8e6, #ffebee);
+            color: #c62828;
             border: 1px solid #f28b82;
         }
 
         .get-key-link {
-            display: inline-block;
+            display: inline-flex;
+            align-items: center;
             margin-top: 8px;
             font-size: 12px;
             color: #1a73e8;
             text-decoration: none;
+            font-weight: 500;
+            gap: 4px;
+            transition: color 0.2s ease;
         }
 
         .get-key-link:hover {
+            color: #1557b0;
             text-decoration: underline;
         }
 
-        .icon {
-            display: inline-block;
-            width: 16px;
-            height: 16px;
-            margin-right: 8px;
-            vertical-align: middle;
+        .quick-setup {
+            background: linear-gradient(135deg, #e3f2fd, #f3e5f5);
+            border: 2px dashed #1a73e8;
+            border-radius: 12px;
+            padding: 16px;
+            margin-bottom: 20px;
+            text-align: center;
         }
 
-        .microphone-icon {
-            background: #1a73e8;
+        .quick-setup h3 {
+            margin: 0 0 8px 0;
+            color: #1a73e8;
+            font-size: 14px;
+            font-weight: 600;
+        }
+
+        .quick-setup p {
+            margin: 0;
+            font-size: 12px;
+            color: #5f6368;
+            line-height: 1.4;
+        }
+
+        .footer {
+            margin-top: 20px;
+            padding-top: 16px;
+            border-top: 1px solid #e8eaed;
+            text-align: center;
+        }
+
+        .footer p {
+            margin: 0;
+            font-size: 11px;
+            color: #9aa0a6;
+            line-height: 1.4;
+        }
+
+        .status-indicator {
+            display: inline-block;
+            width: 8px;
+            height: 8px;
             border-radius: 50%;
+            margin-left: 8px;
+        }
+
+        .status-indicator.connected {
+            background: #4caf50;
+            box-shadow: 0 0 8px rgba(76, 175, 80, 0.5);
+        }
+
+        .status-indicator.disconnected {
+            background: #f44336;
         }
     </style>
 </head>
@@ -205,8 +341,17 @@
 <body>
     <div class="container">
         <div class="header">
-            <h2>Gmail Voice Transcription</h2>
+            <h2>
+                <div class="mic-icon">🎤</div>
+                Voice Transcription
+                <div class="status-indicator disconnected" id="connectionStatus"></div>
+            </h2>
             <p>Choose your AI provider and add your API key</p>
+        </div>
+
+        <div class="quick-setup">
+            <h3>🚀 Quick Setup</h3>
+            <p>1. Choose provider → 2. Add API key → 3. Save → 4. Start transcribing!</p>
         </div>
 
         <div class="api-provider selected" id="groqProvider">
@@ -216,15 +361,19 @@
                     <div class="provider-title">
                         Groq
                         <span class="recommended">Recommended</span>
+                        <span class="speed-badge">Fast</span>
                     </div>
-                    <div class="provider-subtitle">Fast, free tier available</div>
+                    <div class="provider-subtitle">Free tier available • Lightning fast transcription</div>
                 </div>
             </div>
             <div class="api-key-input">
                 <label for="groqApiKey">Groq API Key</label>
-                <input type="password" id="groqApiKey" placeholder="gsk_...">
+                <div class="input-wrapper">
+                    <input type="password" id="groqApiKey" placeholder="gsk_...">
+                    <div class="input-status" id="groqStatus"></div>
+                </div>
                 <a href="https://console.groq.com/keys" target="_blank" class="get-key-link">
-                    Get your free Groq API key
+                    🔗 Get your free Groq API key
                 </a>
             </div>
         </div>
@@ -234,24 +383,30 @@
                 <input type="radio" id="openaiRadio" name="provider" value="openai">
                 <div class="provider-info">
                     <div class="provider-title">OpenAI</div>
-                    <div class="provider-subtitle">GPT-4, requires paid account</div>
+                    <div class="provider-subtitle">GPT-4 powered • Requires paid account</div>
                 </div>
             </div>
             <div class="api-key-input">
                 <label for="openaiApiKey">OpenAI API Key</label>
-                <input type="password" id="openaiApiKey" placeholder="sk-...">
+                <div class="input-wrapper">
+                    <input type="password" id="openaiApiKey" placeholder="sk-...">
+                    <div class="input-status" id="openaiStatus"></div>
+                </div>
                 <a href="https://platform.openai.com/account/api-keys" target="_blank" class="get-key-link">
-                    Get your OpenAI API key
+                    🔗 Get your OpenAI API key
                 </a>
             </div>
         </div>
 
-        <button id="saveSettings" class="save-button">Save Settings</button>
+        <button id="saveSettings" class="save-button">Save & Activate</button>
 
         <div id="status" class="status"></div>
+
+        <div class="footer">
+            <p>Your API keys are stored locally and securely in your browser. Never shared with third parties.</p>
+        </div>
     </div>
 
     <script src="popup.js"></script>
 </body>
-
 </html>
